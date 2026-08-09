@@ -1,0 +1,88 @@
+import base64
+from aiogram import Router, F, Bot
+from aiogram.types import Message, CallbackQuery
+from aiogram.filters import Command
+
+from config import CRYPTO_SYMBOLS
+from database import set_user_asset, get_user_asset, update_user_price
+from binance_service import get_price
+from openai_service import chat_with_ai, analyze_image, market_overview
+from keyboards import main_menu, crypto_inline
+
+router = Router()
+
+@router.message(Command("start"))
+async def cmd_start(message: Message):
+    await message.answer(
+        "🌪️ <b>Привет! Я Vortex</b>\n\n"
+        "Твой умный помощник в мире криптовалют. Выбери действие ниже 👇",
+        reply_markup=main_menu,
+        parse_mode="HTML"
+    )
+
+@router.message(F.text == "📈 Отслеживать актив")
+async def track_asset(message: Message):
+    await message.answer("Выбери криптовалюту:", reply_markup=crypto_inline)
+
+@router.callback_query(F.data.startswith("asset_"))
+async def process_asset(callback: CallbackQuery):
+    asset_name = callback.data.replace("asset_", "")
+    symbol = CRYPTO_SYMBOLS[asset_name]
+    
+    await set_user_asset(callback.from_user.id, asset_name, callback.message.chat.id)
+    
+    data = await get_price(symbol)
+    await update_user_price(callback.from_user.id, data["price"])
+    
+    await callback.message.answer(
+        f"✅ Отслеживаю <b>{asset_name}</b>\n"
+        f"💰 Цена: <b>${data['price']:,.2f}</b>\n"
+        f"📊 24ч: <b>{data['change_percent']:+.2f}%</b>\n\n"
+        f"Пришлю уведомление, если цена изменится больше чем на 2% 📡",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+@router.message(F.text == "📊 Рыночный обзор")
+async def market_summary(message: Message):
+    await message.answer("⏳ Собираю данные с рынка...")
+    
+    prices = {}
+    for name, symbol in CRYPTO_SYMBOLS.items():
+        data = await get_price(symbol)
+        prices[name] = f"${data['price']:,.2f} ({data['change_percent']:+.2f}%)"
+    
+    overview = await market_overview(prices)
+    await message.answer(overview, parse_mode="HTML")
+
+@router.message(F.text == "🖼 Анализ графика")
+async def ask_for_image(message: Message):
+    await message.answer("Пришли скриншот графика — я разберу, что там происходит 📈")
+
+@router.message(F.photo)
+async def analyze_chart(message: Message, bot: Bot):
+    await message.answer("🔍 Смотрю на график...")
+    
+    photo = message.photo[-1]
+    file = await bot.get_file(photo.file_id)
+    
+    file_obj = await bot.download_file(file.file_path)
+    image_bytes = file_obj.read()
+    image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+    
+    analysis = await analyze_image(image_base64)
+    await message.answer(analysis, parse_mode="HTML")
+
+@router.message(F.text == "💬 Задать вопрос ИИ")
+async def ask_ai_mode(message: Message):
+    await message.answer("Напиши вопрос — я отвечу! 🧠")
+
+@router.message()
+async def any_message(message: Message):
+    menu_buttons = ["📈 Отслеживать актив", "📊 Рыночный обзор", 
+                    "🖼 Анализ графика", "💬 Задать вопрос ИИ"]
+    
+    if message.text not in menu_buttons:
+        await message.answer("⏳ Думаю...")
+        answer = await chat_with_ai(message.text)
+        await message.answer(answer, parse_mode="HTML")
