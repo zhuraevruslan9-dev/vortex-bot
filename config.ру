@@ -1,0 +1,14 @@
+import os
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+CRYPTO_SYMBOLS = {
+    "Bitcoin": "BTCUSDT",
+    "Ethereum": "ETHUSDT",
+    "Binance Coin": "BNBUSDT",
+    "Solana": "SOLUSDT"
+}
+
+CHECK_INTERVAL_MINUTES = 5
+PRICE_CHANGE_THRESHOLD = 2.0
