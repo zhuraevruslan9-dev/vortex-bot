@@ -1,0 +1,12 @@
+import aiohttp
+
+BASE_URL = "https://api.binance.com/api/v3/ticker/24hr"
+
+async def get_price(symbol: str):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(BASE_URL, params={"symbol": symbol}) as resp:
+            data = await resp.json()
+            return {
+                "price": float(data["lastPrice"]),
+                "change_percent": float(data["priceChangePercent"])
+            }
