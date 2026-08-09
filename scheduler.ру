@@ -1,50 +1,45 @@
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from aiogram import Bot
 from config import CRYPTO_SYMBOLS, PRICE_CHANGE_THRESHOLD, CHECK_INTERVAL_MINUTES
 from database import get_all_tracking_users, update_user_price
 from binance_service import get_price
 
-scheduler = AsyncIOScheduler()
+async def check_prices(context):
+    users = await get_all_tracking_users()
+    
+    for user_id, asset_name, last_price, chat_id in users:
+        if not asset_name or not chat_id:
+            continue
+            
+        symbol = CRYPTO_SYMBOLS.get(asset_name)
+        if not symbol:
+            continue
+            
+        try:
+            data = await get_price(symbol)
+            current_price = data["price"]
+            
+            if last_price is None:
+                await update_user_price(user_id, current_price)
+                continue
+            
+            change_percent = abs((current_price - last_price) / last_price * 100)
+            
+            if change_percent >= PRICE_CHANGE_THRESHOLD:
+                direction = "📈 Выросла" if current_price > last_price else "📉 Упала"
+                
+                await context.bot.send_message(
+                    chat_id,
+                    f"🚨 <b>Цена изменилась!</b>\n\n"
+                    f"💎 {asset_name}\n"
+                    f"{direction} на <b>{change_percent:.2f}%</b>\n"
+                    f"💰 Было: ${last_price:,.2f}\n"
+                    f"💰 Сейчас: ${current_price:,.2f}",
+                    parse_mode="HTML"
+                )
+                await update_user_price(user_id, current_price)
+                
+        except Exception as e:
+            print(f"[Scheduler Error] User {user_id}: {e}")
 
-def setup_scheduler(bot: Bot):
-    
-    @scheduler.scheduled_job("interval", minutes=CHECK_INTERVAL_MINUTES, id="price_checker")
-    async def check_prices():
-        users = await get_all_tracking_users()
-        
-        for user_id, asset_name, last_price, chat_id in users:
-            if not asset_name or not chat_id:
-                continue
-                
-            symbol = CRYPTO_SYMBOLS.get(asset_name)
-            if not symbol:
-                continue
-                
-            try:
-                data = await get_price(symbol)
-                current_price = data["price"]
-                
-                if last_price is None:
-                    await update_user_price(user_id, current_price)
-                    continue
-                
-                change_percent = abs((current_price - last_price) / last_price * 100)
-                
-                if change_percent >= PRICE_CHANGE_THRESHOLD:
-                    direction = "📈 Выросла" if current_price > last_price else "📉 Упала"
-                    
-                    await bot.send_message(
-                        chat_id,
-                        f"🚨 <b>Цена изменилась!</b>\n\n"
-                        f"💎 {asset_name}\n"
-                        f"{direction} на <b>{change_percent:.2f}%</b>\n"
-                        f"💰 Было: ${last_price:,.2f}\n"
-                        f"💰 Сейчас: ${current_price:,.2f}",
-                        parse_mode="HTML"
-                    )
-                    await update_user_price(user_id, current_price)
-                    
-            except Exception as e:
-                print(f"[Scheduler Error] User {user_id}: {e}")
-    
-    scheduler.start()
+def setup_scheduler(application):
+    job_queue = application.job_queue
+    job_queue.run_repeating(check_prices, interval=CHECK_INTERVAL_MINUTES * 60, first=10)
