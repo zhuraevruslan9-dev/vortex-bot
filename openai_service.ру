@@ -1,0 +1,46 @@
+from openai import AsyncOpenAI
+from config import OPENAI_API_KEY
+client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+async def chat_with_ai(message_text):
+    try:
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content":
+                 "You are Vortex, a friendly AI assistant in crypto world."},
+                {"role": "user", "content": message_text}
+            ]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"Error AI: {e}"
+async def analyze_image(image_base64):
+    try:
+        response = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content":
+                 "You are a crypto analyst. Analyze the chart simply."},
+                {"role": "user", "content": [
+                    {"type": "text", "text": "Analyze this chart"},
+                    {"type": "image_url",
+                     "image_url": {"url": f"data:image/png;base64,{image_base64}"}}
+                ]}
+            ]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"Failed to analyze: {e}"
+async def market_overview(prices_data):
+    prompt = f"""You are Vortex analyst. Here is Binance data:
+{prices_data}
+Give a brief, lively market overview."""
+    try:
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"Error overview: {e}"
+
