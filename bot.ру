@@ -1,0 +1,246 @@
+import os
+import asyncio
+import logging
+import base64
+import aiosqlite
+import aiohttp
+from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+from openai import AsyncOpenAI
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+CRYPTO_SYMBOLS = {
+    "Bitcoin": "BTCUSDT",
+    "Ethereum": "ETHUSDT",
+    "Binance Coin": "BNBUSDT",
+    "Solana": "SOLUSDT"
+}
+CHECK_INTERVAL_MINUTES = 5
+PRICE_CHANGE_THRESHOLD = 2.0
+
+DB_NAME = "vortex.db"
+
+async def init_db():
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                selected_asset TEXT,
+                last_price REAL,
+                chat_id INTEGER
+            )
+        ''')
+        await db.commit()
+
+async def set_user_asset(user_id, asset, chat_id):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute('''
+            INSERT INTO users (user_id, selected_asset, last_price, chat_id)
+            VALUES (?, ?, NULL, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                selected_asset = excluded.selected_asset,
+                chat_id = excluded.chat_id,
+                last_price = NULL
+        ''', (user_id, asset, chat_id))
+        await db.commit()
+
+async def get_user_asset(user_id):
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT selected_asset, last_price FROM users WHERE user_id = ?", (user_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row if row else (None, None)
+
+async def update_user_price(user_id, price):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "UPDATE users SET last_price = ? WHERE user_id = ?", (price, user_id)
+        )
+        await db.commit()
+
+async def get_all_tracking_users():
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT user_id, selected_asset, last_price, chat_id FROM users WHERE selected_asset IS NOT NULL"
+        ) as cursor:
+            return await cursor.fetchall()
+
+async def get_price(symbol):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(
+            "https://api.binance.com/api/v3/ticker/24hr",
+            params={"symbol": symbol}
+        ) as resp:
+            data = await resp.json()
+            return {
+                "price": float(data["lastPrice"]),
+                "change_percent": float(data["priceChangePercent"])
+            }
+
+client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+
+async def chat_with_ai(message_text):
+    try:
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are Vortex, friendly crypto AI assistant."},
+                {"role": "user", "content": message_text}
+            ]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"Error: {e}"
+
+async def analyze_image(image_base64):
+    try:
+        response = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You are crypto analyst. Analyze chart simply."},
+                {"role": "user", "content": [
+                    {"type": "text", "text": "Analyze chart"},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_base64}"}}
+                ]}
+            ]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"Error: {e}"
+
+async def market_overview(prices_data):
+    prompt = f"""You are Vortex analyst. Binance data:
+{prices_data}
+Give brief lively market overview."""
+    try:
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"Error: {e}"
+
+main_menu = ReplyKeyboardMarkup(
+    [['📈 Отслеживать актив'], ['📊 Рыночный обзор'], ['🖼 Анализ графика'], ['💬 Задать вопрос ИИ']],
+    resize_keyboard=True
+)
+
+crypto_inline = InlineKeyboardMarkup([
+    [InlineKeyboardButton("₿ Bitcoin", callback_data="asset_Bitcoin")],
+    [InlineKeyboardButton("Ξ Ethereum", callback_data="asset_Ethereum")],
+    [InlineKeyboardButton("🅱 Binance Coin", callback_data="asset_Binance Coin")],
+    [InlineKeyboardButton("◎ Solana", callback_data="asset_Solana")]
+])
+
+async def start(update, context):
+    await update.message.reply_text(
+        "🌪️ Привет! Я Vortex.\n\nТвой умный помощник в мире криптовалют. Выбери действие 👇",
+        reply_markup=main_menu
+    )
+
+async def track_asset(update, context):
+    await update.message.reply_text("Выбери криптовалюту:", reply_markup=crypto_inline)
+
+async def process_asset(update, context):
+    query = update.callback_query
+    await query.answer()
+    asset_name = query.data.replace("asset_", "")
+    symbol = CRYPTO_SYMBOLS[asset_name]
+    await set_user_asset(query.from_user.id, asset_name, query.message.chat.id)
+    data = await get_price(symbol)
+    await update_user_price(query.from_user.id, data["price"])
+    await query.message.reply_text(
+        f"✅ Отслеживаю {asset_name}\n"
+        f"💰 Цена: ${data['price']:,.2f}\n"
+        f"📊 24ч: {data['change_percent']:+.2f}%\n\n"
+        f"Пришлю уведомление при изменении >2% 📡"
+    )
+
+async def market_summary(update, context):
+    await update.message.reply_text("⏳ Собираю данные с рынка...")
+    prices = {}
+    for name, symbol in CRYPTO_SYMBOLS.items():
+        data = await get_price(symbol)
+        prices[name] = f"${data['price']:,.2f} ({data['change_percent']:+.2f}%)"
+    overview = await market_overview(prices)
+    await update.message.reply_text(overview)
+
+async def ask_for_image(update, context):
+    await update.message.reply_text("Пришли скриншот графика — я разберу, что там происходит 📈")
+
+async def analyze_chart(update, context):
+    await update.message.reply_text("🔍 Смотрю на график...")
+    photo = update.message.photo[-1]
+    file = await context.bot.get_file(photo.file_id)
+    file_obj = await file.download_as_bytearray()
+    image_bytes = bytes(file_obj)
+    image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+    analysis = await analyze_image(image_base64)
+    await update.message.reply_text(analysis)
+
+async def ask_ai_mode(update, context):
+    await update.message.reply_text("Напиши вопрос — я отвечу! 🧠")
+
+async def any_message(update, context):
+    menu = ["📈 Отслеживать актив", "📊 Рыночный обзор", "🖼 Анализ графика", "💬 Задать вопрос ИИ"]
+    if update.message.text not in menu:
+        await update.message.reply_text("⏳ Думаю...")
+        answer = await chat_with_ai(update.message.text)
+        await update.message.reply_text(answer)
+
+async def check_prices(context):
+    users = await get_all_tracking_users()
+    for user_id, asset_name, last_price, chat_id in users:
+        if not asset_name or not chat_id:
+            continue
+        symbol = CRYPTO_SYMBOLS.get(asset_name)
+        if not symbol:
+            continue
+        try:
+            data = await get_price(symbol)
+            current_price = data["price"]
+            if last_price is None:
+                await update_user_price(user_id, current_price)
+                continue
+            change_percent = abs((current_price - last_price) / last_price * 100)
+            if change_percent >= PRICE_CHANGE_THRESHOLD:
+                direction = "📈 Выросла" if current_price > last_price else "📉 Упала"
+                await context.bot.send_message(
+                    chat_id,
+                    f"🚨 Цена изменилась!\n\n"
+                    f"💎 {asset_name}\n"
+                    f"{direction} на {change_percent:.2f}%\n"
+                    f"💰 Было: ${last_price:,.2f}\n"
+                    f"💰 Сейчас: ${current_price:,.2f}"
+                )
+                await update_user_price(user_id, current_price)
+        except Exception as e:
+            print(f"Error: {e}")
+
+def setup_scheduler(application):
+    application.job_queue.run_repeating(
+        check_prices, interval=CHECK_INTERVAL_MINUTES * 60, first=10
+    )
+
+logging.basicConfig(level=logging.INFO)
+
+async def main():
+    await init_db()
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.Text(["📈 Отслеживать актив"]), track_asset))
+    app.add_handler(MessageHandler(filters.Text(["📊 Рыночный обзор"]), market_summary))
+    app.add_handler(MessageHandler(filters.Text(["🖼 Анализ графика"]), ask_for_image))
+    app.add_handler(MessageHandler(filters.Text(["💬 Задать вопрос ИИ"]), ask_ai_mode))
+    app.add_handler(CallbackQueryHandler(process_asset, pattern="^asset_"))
+    app.add_handler(MessageHandler(filters.PHOTO, analyze_chart))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, any_message))
+    setup_scheduler(app)
+    print("Vortex started!")
+    await app.run_polling()
+
+if __name__ == "__main__":
+    asyncio.run(main())
