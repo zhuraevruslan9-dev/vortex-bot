@@ -11,10 +11,10 @@ logging.basicConfig(level=logging.INFO)
 
 async def main():
     await init_db()
-    application=Application.builder().token(BOT_TOKEN).build()
+    application = Application.builder().token(BOT_TOKEN).build()
     register_handlers(application)
     setup_scheduler(application)
-    print("🌪️ Vortex запущен!")
+    print("Vortex zapushen!")
     await application.run_polling()
 
 if __name__ == "__main__":
