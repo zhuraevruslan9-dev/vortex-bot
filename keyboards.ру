@@ -1,0 +1,14 @@
+from telegram import ReplyKeyboardMarkup
+from telegram import InlineKeyboardButton
+from telegram import InlineKeyboardMarkup
+main_menu = ReplyKeyboardMarkup(
+    [['📈 Track asset'], ['📊 Market overview'],
+     ['🖼 Chart analysis'], ['💬 Ask AI']],
+    resize_keyboard=True
+)
+crypto_inline = InlineKeyboardMarkup([
+    [InlineKeyboardButton("Bitcoin", callback_data="asset_Bitcoin")],
+    [InlineKeyboardButton("Ethereum", callback_data="asset_Ethereum")],
+    [InlineKeyboardButton("Binance Coin", callback_data="asset_Binance Coin")],
+    [InlineKeyboardButton("Solana", callback_data="asset_Solana")]
+])
