@@ -1,0 +1,55 @@
+from openai import AsyncOpenAI
+from config import OPENAI_API_KEY
+
+client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+
+async def chat_with_ai(message_text: str) -> str:
+    try:
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": 
+                 "Ты — Vortex, дружелюбный ИИ-помощник в мире криптовалют. "
+                 "Общайся просто, с лёгким юмором, объясняй сложное доступно. "
+                 "Можешь шутить и поддерживать разговор на любые темы."},
+                {"role": "user", "content": message_text}
+            ]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"⚠️ Ошибка ИИ: {e}"
+
+async def analyze_image(image_base64: str) -> str:
+    try:
+        response = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": 
+                 "Ты — опытный криптоаналитик. Проанализируй график: опиши тренд, "
+                 "ключевые уровни, вероятное движение цены. Объясняй простым языком."},
+                {"role": "user", "content": [
+                    {"type": "text", "text": "Проанализируй этот график"},
+                    {"type": "image_url", "image_url": 
+                     {"url": f"data:image/png;base64,{image_base64}"}}
+                ]}
+            ]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"⚠️ Не удалось проанализировать: {e}"
+
+async def market_overview(prices_data: dict) -> str:
+    prompt = f"""Ты — аналитик Vortex. Вот текущие данные с Binance:
+{prices_data}
+
+Дай краткий, живой обзор рынка. Выдели тенденции, что растёт, что падает. 
+Объясни просто, как другу. Добавь немного характера."""
+    
+    try:
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"⚠️ Ошибка обзора: {e}"
