@@ -1,0 +1,18 @@
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+
+main_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="📈 Отслеживать актив")],
+        [KeyboardButton(text="📊 Рыночный обзор")],
+        [KeyboardButton(text="🖼 Анализ графика")],
+        [KeyboardButton(text="💬 Задать вопрос ИИ")]
+    ],
+    resize_keyboard=True
+)
+
+crypto_inline = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="₿ Bitcoin", callback_data="asset_Bitcoin")],
+    [InlineKeyboardButton(text="Ξ Ethereum", callback_data="asset_Ethereum")],
+    [InlineKeyboardButton(text="🅱 Binance Coin", callback_data="asset_Binance Coin")],
+    [InlineKeyboardButton(text="◎ Solana", callback_data="asset_Solana")]
+])
